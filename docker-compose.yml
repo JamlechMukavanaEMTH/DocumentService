@@ -1,0 +1,80 @@
+version: "3.8"
+
+services:
+  postgres:
+    image: postgres:15-alpine
+    container_name: docservice_postgres
+    environment:
+      POSTGRES_USER: docuser
+      POSTGRES_PASSWORD: docpass
+      POSTGRES_DB: docservice
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U docuser -d docservice"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: docservice_redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  app:
+    build: .
+    container_name: docservice_app
+    ports:
+      - "8000:8000"
+    environment:
+      DATABASE_URL: postgresql+asyncpg://docuser:docpass@postgres:5432/docservice
+      REDIS_URL: redis://redis:6379/0
+      STORAGE_BACKEND: local
+      STORAGE_ROOT: /app/data/storage
+      MAX_FILE_SIZE_BYTES: 104857600
+      OCR_LANGUAGE: eng
+      ENABLE_PDF_OPTIMIZE: "true"
+      DEFAULT_COMPRESSION_LEVEL: "6"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./data:/app/data
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000
+
+  worker:
+    build: .
+    container_name: docservice_worker
+    environment:
+      DATABASE_URL: postgresql+asyncpg://docuser:docpass@postgres:5432/docservice
+      REDIS_URL: redis://redis:6379/0
+      STORAGE_BACKEND: local
+      STORAGE_ROOT: /app/data/storage
+      MAX_FILE_SIZE_BYTES: 104857600
+      OCR_LANGUAGE: eng
+      ENABLE_PDF_OPTIMIZE: "true"
+      DEFAULT_COMPRESSION_LEVEL: "6"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./data:/app/data
+    command: arq app.worker.settings.WorkerSettings
+
+volumes:
+  postgres_data:
+  redis_data:
